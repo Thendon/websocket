@@ -11,15 +11,22 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+#include <time.h>
+#include <sys/stat.h>
+
 #define MAX_SOCK 10
 #define URI_SIZE 255
 #define CHUNK_SIZE 255
 #define MAX_PATHLENGTH 255
+#define DATE_SIZE 32
+#define DATE_FORMAT "%a, %e %b %G %T GTM+1"
 
 // Vorwaertsdeklarationen intern
 void scan_request(int sockfd, char* rootDir);
 void send_error(int sockfd, const char* version, const int code, const char* text);
-void send_file(int sockfd, const char* path, const char* version);
+void generate_timeString(time_t timer, char* output);
+void generate_okHeader(const char* filepath, char* output);
+void send_html(int sockfd, const char* path, const char* version);
 void err_abort(char *str);
 
 int main(int argc, char *argv[]) {
@@ -77,11 +84,12 @@ int main(int argc, char *argv[]) {
 		if((pid = fork()) < 0){
 			err_abort("Fehler beim Erzeugen eines Kindprozesses!");
 		}else if(pid == 0){
-			close(sockfd);
+      close(sockfd);
 			scan_request(newsockfd, rootDir);
+      //close(newsockfd);
 			exit(0);
 		}
-		close(newsockfd);
+    close(newsockfd);
 	}
 }
 
@@ -102,16 +110,20 @@ void scan_request(int sockfd, char* rootDir){
   	n = read(sockfd,requestBuffer,URI_SIZE);
     sprintf( request, "%s%s", request, requestBuffer);
   	if(n==0){
-  		printf("Header empty\n");
+  		//printf("Header empty\n");
+      //break;
+      err_abort("Header empty\n");
   	}else if(n < 0){
   		err_abort("Fehler beim Lesen des Sockets!");
-  	}else if(n < URI_SIZE || requestBuffer[n-1] == '\0'){
+  	}else if(n < URI_SIZE || strstr(request,"\r\n\r\n")){
       printf("Request komplett (%d)!\n", headerSize);
       break;
     }
     headerSize++;
     request = realloc(request, headerSize * sizeof(char)*URI_SIZE);
   }
+
+  printf("received header:\n%s", request);
 
 	header = strtok(request, " ");
   printf("command: %s\n", header);
@@ -120,13 +132,16 @@ void scan_request(int sockfd, char* rootDir){
     version = strtok(NULL, "\n");
     printf("path: %s\nversion: %s\n", path, version);
 
+    free(request);
     send_html(sockfd, path, version);
 	} else if ( strcmp(header,"POST") == 0 ){
+    //read inputs
+    free(request);
 		//send_file
 	} else {
+    free(request);
 		err_abort("Header invalid!\n");
 	}
-	//}
 }
 
 void send_error(int sockfd, const char* version, const int code, const char* text){
@@ -141,12 +156,73 @@ void send_error(int sockfd, const char* version, const int code, const char* tex
   }
 }
 
+void generate_timeString(time_t timer, char* output){
+  struct tm* tm_info = localtime(&timer);
+  strftime(output, DATE_SIZE, DATE_FORMAT, tm_info);
+}
+
+void generate_okHeader(const char* filepath, char* output){
+  time_t timer;
+  time(&timer);
+  char now[DATE_SIZE];
+  generate_timeString(timer, now);
+
+  struct stat attr;
+  stat(filepath, &attr);
+  char modified[DATE_SIZE];
+  generate_timeString(attr.st_mtime, modified);
+
+  sprintf(
+    output,
+    "HTTP/1.1 200 OK\nDate: %s\nLast-Modified: %s\nContent-Language: de\nContent-Type: text/html; charset=utf-8\r\n\r\n",
+    now,
+    modified
+  );
+}
+
 void send_html(int sockfd, const char* path, const char* version){
   FILE* file = fopen( path, "r" );
   if( file == NULL ){
     send_error(sockfd, version, 404, "Not Found");
     return;
   }
+
+  char response[CHUNK_SIZE+1];
+  memset(response, '\0', CHUNK_SIZE+1);
+  generate_okHeader( path, response );
+
+  int n;
+  for(int i = 0;;i++){
+    //if first response sub headerbytes
+    int resLength = (int)strlen(response);
+    if( resLength > 0 ){
+      char chunk[CHUNK_SIZE-resLength+1];
+      n = fread(chunk, 1, CHUNK_SIZE-resLength, file);
+      chunk[n] = '\0';
+
+      sprintf(response, "%s%s", response, chunk);
+      n += resLength;
+    }
+    else{
+      n = fread(response, 1, CHUNK_SIZE, file);
+      //chunk[CHUNK_SIZE] = '\0';
+    }
+
+    printf("response (i: %d l: %d):\n%s\n\n", i, n,response);
+
+    if(write(sockfd, response, n) != n){
+      err_abort("Fehler beim Schreiben des Sockets!");
+    }
+
+    //break if chunk is not filled on cap
+    if( n < CHUNK_SIZE ){
+			printf("HTML-Transfer vollendet!\n");
+      break;
+    }
+    //clear response for next chunk
+    memset(response, '\0', CHUNK_SIZE+1);
+  }
+
   fclose( file );
 }
 
