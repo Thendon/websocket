@@ -26,6 +26,7 @@ void scan_request(int sockfd, char* rootDir);
 void send_error(int sockfd, const char* version, const int code, const char* text);
 void generate_timeString(time_t timer, char* output);
 void generate_okHeader(const char* filepath, char* output);
+void send_post_calculation(int sockfd, int num1, int num2);
 void send_html(int sockfd, const char* path, const char* version);
 void err_abort(char *str);
 
@@ -99,45 +100,59 @@ scan_request: Lesen von Daten vom Socket und an den Client zuruecksenden
 void scan_request(int sockfd, char* rootDir){
 	int n;
   int headerSize = 1;
-  char requestBuffer[URI_SIZE];
+  char requestBuffer[URI_SIZE+1];
 	char* request = (char*)malloc(sizeof(char)*URI_SIZE);
-  char path[MAX_PATHLENGTH];
-
-	char* header;
-  char* version;
 
 	for(;;){
   	n = read(sockfd,requestBuffer,URI_SIZE);
+    requestBuffer[n] = '\0';
     sprintf( request, "%s%s", request, requestBuffer);
+
+    //printf("reqBuffer part %d\n%s\n\n", headerSize, requestBuffer);
+
   	if(n==0){
-  		//printf("Header empty\n");
-      //break;
       err_abort("Header empty\n");
   	}else if(n < 0){
   		err_abort("Fehler beim Lesen des Sockets!");
-  	}else if(n < URI_SIZE || strstr(request,"\r\n\r\n")){
-      printf("Request komplett (%d)!\n", headerSize);
+  	}else if(n < URI_SIZE /*|| strstr(request,"\r\n\r\n")*/){
+      printf("Request komplett (%d chunks)!\n", headerSize);
       break;
     }
     headerSize++;
     request = realloc(request, headerSize * sizeof(char)*URI_SIZE);
   }
 
-  printf("received header:\n%s", request);
+  //printf("received request:\n%s\n", request);
 
-	header = strtok(request, " ");
-  printf("command: %s\n", header);
-	if( strcmp(header,"GET") == 0 ){
+  char* header = request;
+  char* body = strstr(request, "\r\n\r\n");
+  header[body - header] = '\0';
+  body = &body[4];
+
+  printf("header:\n%s\n", header);
+  printf("body:\n%s\n", body);
+
+	char* command = strtok(header, " ");
+  printf("command: %s\n", command);
+	if( strcmp(command,"GET") == 0 ){
+    char path[MAX_PATHLENGTH];
     sprintf(path, "%s%s", rootDir, strtok(NULL, " "));
+    char* version;
     version = strtok(NULL, "\n");
     printf("path: %s\nversion: %s\n", path, version);
 
     free(request);
+
     send_html(sockfd, path, version);
-	} else if ( strcmp(header,"POST") == 0 ){
-    //read inputs
+	} else if ( strcmp(command,"POST") == 0 ){
+    strtok(body, "=");
+    int num1 = atoi(strtok(NULL, "&"));
+    strtok(NULL, "=");
+    int num2 = atoi(strtok(NULL, "&"));
+
     free(request);
-		//send_file
+
+    send_post_calculation(sockfd, num1, num2);
 	} else {
     free(request);
 		err_abort("Header invalid!\n");
@@ -167,10 +182,15 @@ void generate_okHeader(const char* filepath, char* output){
   char now[DATE_SIZE];
   generate_timeString(timer, now);
 
-  struct stat attr;
-  stat(filepath, &attr);
   char modified[DATE_SIZE];
-  generate_timeString(attr.st_mtime, modified);
+  if(filepath != NULL){
+    struct stat attr;
+    stat(filepath, &attr);
+    generate_timeString(attr.st_mtime, modified);
+  }
+  else {
+    memcpy(modified, now, sizeof(modified));
+  }
 
   sprintf(
     output,
@@ -178,6 +198,23 @@ void generate_okHeader(const char* filepath, char* output){
     now,
     modified
   );
+}
+
+void send_post_calculation(int sockfd, int num1, int num2){
+  char response[CHUNK_SIZE+1];
+  memset(response, '\0', CHUNK_SIZE+1);
+  generate_okHeader( NULL, response );
+
+  sprintf(
+    response,
+    "%s<HTML><BODY><center><h1> Ergebnis: %d</h1></center></BODY></HTML>",
+    response,
+    num1 * num2
+  );
+
+  if(write(sockfd, response, strlen(response)) != strlen(response)){
+    err_abort("Fehler beim Schreiben des Sockets!");
+  }
 }
 
 void send_html(int sockfd, const char* path, const char* version){
@@ -205,7 +242,6 @@ void send_html(int sockfd, const char* path, const char* version){
     }
     else{
       n = fread(response, 1, CHUNK_SIZE, file);
-      //chunk[CHUNK_SIZE] = '\0';
     }
 
     printf("response (i: %d l: %d):\n%s\n\n", i, n,response);
