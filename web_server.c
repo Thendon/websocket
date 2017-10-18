@@ -192,12 +192,24 @@ void generate_okHeader(const char* filepath, char* output){
     memcpy(modified, now, sizeof(modified));
   }
 
-  sprintf(
+  if(strstr(filepath, ".png"))
+  {
+    sprintf(
     output,
-    "HTTP/1.1 200 OK\nDate: %s\nLast-Modified: %s\nContent-Language: de\nContent-Type: text/html; charset=utf-8\r\n\r\n",
+    "HTTP/1.1 200 OK\nDate: %s\nLast-Modified: %s\nContent-Language: de\nContent-Type: image/png; charset=utf-8\r\n\r\n",
     now,
     modified
-  );
+    );
+  }
+  else
+  {
+    sprintf(
+      output,
+      "HTTP/1.1 200 OK\nDate: %s\nLast-Modified: %s\nContent-Language: de\nContent-Type: text/html; charset=utf-8\r\n\r\n",
+      now,
+      modified
+    );
+  }
 }
 
 void send_post_calculation(int sockfd, int num1, int num2){
@@ -233,14 +245,18 @@ void send_html(int sockfd, const char* path, const char* version){
     //if first response sub headerbytes
     int resLength = (int)strlen(response);
     if( resLength > 0 ){
-      char chunk[CHUNK_SIZE-resLength+1];
-      n = fread(chunk, 1, CHUNK_SIZE-resLength, file);
-      chunk[n] = '\0';
+      printf("\nsprintf\n");
+      //char chunk[CHUNK_SIZE-resLength+1];
+      //n = fread(chunk, 1, CHUNK_SIZE-resLength, file);
+      //chunk[n] = '\0';
 
-      sprintf(response, "%s%s", response, chunk);
-      n += resLength;
+      //response[resLength] = *chunk; 
+      //sprintf(response, "%s%s", response, chunk);
+      //n += resLength;
+      n=resLength;
     }
     else{
+      printf("\nSPRINTF\n");
       n = fread(response, 1, CHUNK_SIZE, file);
     }
 
@@ -251,7 +267,7 @@ void send_html(int sockfd, const char* path, const char* version){
     }
 
     //break if chunk is not filled on cap
-    if( n < CHUNK_SIZE ){
+    if( n < CHUNK_SIZE && resLength == 0){
 			printf("HTML-Transfer vollendet!\n");
       break;
     }
